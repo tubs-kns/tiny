@@ -28,12 +28,6 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 
 # =========================================================
-# 0) Config toggles
-# =========================================================
-SHOW_RANDOM_BAND = False  # ADDED: set True to also draw Random-Fit mean ±1σ band
-
-
-# =========================================================
 # 1) Load data
 # =========================================================
 
@@ -199,22 +193,16 @@ def evaluate_latency_vs_devices_random(L: int, max_devices: int, cost_segment, t
     for N in range(2, max_devices + 1):
         t0 = time.time()
         latencies = []
-        best_cost = float("inf")            # ADDED: track deployable best cost
-        best_splits = None                  # ADDED: track deployable best splits
         for t in range(trials):
             s, c = random_fit_split(L, N, cost_segment, trials=1, seed=seed + N * 1000 + t)
             latencies.append(c)
-            if c < best_cost:               # ADDED
-                best_cost, best_splits = c, s  # ADDED
         t1 = time.time()
         latencies = np.array(latencies, dtype=float)
-        mean_lat, std_lat = float(latencies.mean()), float(latencies.std())
-        best_lat = float(best_cost)         # CHANGED: use tracked best instead of latencies.min()
-        rows.append((N, mean_lat, std_lat, best_lat, t1 - t0, str(best_splits)))  # CHANGED: append best_splits string
-        print(f"[Rand]  N={N} | mean={mean_lat:.3f} ± {std_lat:.3f} | best={best_lat:.3f} @ splits={best_splits} | Time={t1 - t0:.3f}s")
-    # CHANGED: include 'Random_Best_Splits' column to expose deployable configuration
+        mean_lat, std_lat, best_lat = float(latencies.mean()), float(latencies.std()), float(latencies.min())
+        rows.append((N, mean_lat, std_lat, best_lat, t1 - t0))
+        print(f"[Rand]  N={N} | mean={mean_lat:.3f} ± {std_lat:.3f} | best={best_lat:.3f} | Time={t1 - t0:.3f}s")
     return pd.DataFrame(rows, columns=[
-        "Devices", "Random_Mean_Latency", "Random_Std_Latency", "Random_Best_Latency", "Random_Time", "Random_Best_Splits"  # CHANGED
+        "Devices", "Random_Mean_Latency", "Random_Std_Latency", "Random_Best_Latency", "Random_Time"
     ])
 
 
@@ -222,7 +210,7 @@ def evaluate_latency_vs_devices_random(L: int, max_devices: int, cost_segment, t
 # 7) Plot (all in one figure)
 # =========================================================
 
-def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_rand: pd.DataFrame, inset_at: int | None = 4):
+def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_rand: pd.DataFrame | None = None, inset_at: int | None = 4):
     fig, ax1 = plt.subplots(figsize=(9, 5.5))
     ax2 = ax1.twinx()
 
@@ -235,24 +223,13 @@ def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_ra
              marker="o", linewidth=2, label="Beam Search (latency)")
     ax1.plot(df_opt["Devices"], df_opt["Optimal_Latency"],
              marker="s", linewidth=2, label="Brute-Force Optimal (latency)")
+    #ax1.plot(df_rand["Devices"], df_rand["Random_Mean_Latency"],
+    #         marker="^", linewidth=2, label="Random-Fit (latency)")
+    # variability band for random
 
-    # CHANGED: plot Random-Fit BEST latency (deployable) instead of mean
-    ax1.plot(df_rand["Devices"], df_rand["Random_Best_Latency"],
-             marker="^", linewidth=2, label="Random-Fit Best (latency)")  # CHANGED
 
-    # ADDED: optional band for mean ±1σ if you still want to visualize variability
-    if SHOW_RANDOM_BAND:
-        ax1.plot(df_rand["Devices"], df_rand["Random_Mean_Latency"],
-                 marker="x", linewidth=1.2, linestyle="--", alpha=0.7, label="Random-Fit Mean (latency)")  # ADDED
-        ax1.fill_between(
-            df_rand["Devices"],
-            df_rand["Random_Mean_Latency"] - df_rand["Random_Std_Latency"],
-            df_rand["Random_Mean_Latency"] + df_rand["Random_Std_Latency"],
-            alpha=0.12, label="Random-Fit ±1σ"  # ADDED
-        )
-
-    ax1.set_xlabel("Number of Devices (N)", fontsize=14)
-    ax1.set_ylabel("Total Latency (ms)", fontsize=14)
+    ax1.set_xlabel("Number of Devices (N)", fontsize=16)
+    ax1.set_ylabel("Total Latency (ms)", fontsize=16)
     ax1.grid(True, linestyle="--", alpha=0.6)
 
     # ---- Processing-time bars (right axis) ----
@@ -260,8 +237,8 @@ def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_ra
     x = df_beam["Devices"].values
     bars_beam = ax2.bar(x - width, df_beam["Beam_Time"], width=width, alpha=0.3, label="Beam Time (s)")
     bars_brut = ax2.bar(x + 0.0,    df_opt["Brute_Time"], width=width, alpha=0.3, label="Brute Time (s)")
-    bars_rand = ax2.bar(x + width,   df_rand["Random_Time"], width=width, alpha=0.3, label="Random Time (s)")
-    ax2.set_ylabel("Processing Time (s)", fontsize=14)
+    #bars_rand = ax2.bar(x + width,   df_rand["Random_Time"], width=width, alpha=0.3, label="Random-Fit Time (s)")
+    ax2.set_ylabel("Processing Time (s)", fontsize=16)
 
     # Labels above bars
     def add_bar_labels(axis, bars, fontsize=9):
@@ -270,17 +247,17 @@ def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_ra
         for b in bars:
             h = b.get_height()
             if h > 0:
-                axis.text(b.get_x() + b.get_width()/2, h + headroom,
+                axis.text(b.get_x() + b.get_width()/2, h ,
                           f"{h:.0f}s" if h >= 1 else f"{h:.2f}s",
                           ha="center", va="bottom", fontsize=fontsize)
     add_bar_labels(ax2, bars_beam)
     add_bar_labels(ax2, bars_brut)
-    add_bar_labels(ax2, bars_rand)
+    #add_bar_labels(ax2, bars_rand)
 
     # ---- Legend (merge both axes) ----
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc="lower left", bbox_to_anchor=(0.0, 0.02))
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=14, loc="upper left", bbox_to_anchor=(0.02, 0.98))
 
     # ---- Optional inset zoom around inset_at ----
     if inset_at is not None and inset_at in df_beam["Devices"].values:
@@ -297,15 +274,15 @@ def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_ra
 
         db = filter_at(df_beam)
         do = filter_at(df_opt)
-        dr = filter_at(df_rand)
+        #dr = filter_at(df_rand)
 
         # plot latency points at inset
         if not db.empty:
             ax_ins.plot(db["Devices"], db["Beam_Latency"], marker="o", linewidth=2)
         if not do.empty:
             ax_ins.plot(do["Devices"], do["Optimal_Latency"], marker="s", linewidth=2)
-        if not dr.empty:
-            ax_ins.plot(dr["Devices"], dr["Random_Best_Latency"], marker="^", linewidth=2)  # CHANGED
+        #if not dr.empty:
+        #    ax_ins.plot(dr["Devices"], dr["Random_Mean_Latency"], marker="^", linewidth=2)
 
         # bars for processing time at inset
         w_inset = 0.15
@@ -313,23 +290,23 @@ def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_ra
             ax_ins2.bar(db["Devices"] - w_inset, db["Beam_Time"], width=w_inset, alpha=0.3)
         if not do.empty:
             ax_ins2.bar(do["Devices"] + 0.0, do["Brute_Time"], width=w_inset, alpha=0.3)
-        if not dr.empty:
-            ax_ins2.bar(dr["Devices"] + w_inset, dr["Random_Time"], width=w_inset, alpha=0.3)
+        #if not dr.empty:
+        #    ax_ins2.bar(dr["Devices"] + w_inset, dr["Random_Time"], width=w_inset, alpha=0.3)
 
         # y-lims with padding for inset latency axis
         yvals = []
         if not db.empty: yvals += db["Beam_Latency"].tolist()
         if not do.empty: yvals += do["Optimal_Latency"].tolist()
-        if not dr.empty: yvals += dr["Random_Best_Latency"].tolist()  # CHANGED
+        #if not dr.empty: yvals += dr["Random_Mean_Latency"].tolist()
         if yvals:
             ymin, ymax = float(np.min(yvals)), float(np.max(yvals))
             pad = max(10.0, 0.08 * (ymax - ymin if ymax > ymin else 50.0))
             ax_ins.set_ylim(ymin - pad, ymax + pad)
 
         ax_ins.grid(True, linestyle="--", alpha=0.6)
-        ax_ins.set_title(f"Zoom @ N={inset_at}", fontsize=10, pad=2)
-        ax_ins.tick_params(labelsize=9)
-        ax_ins2.tick_params(labelsize=9)
+        ax_ins.set_title(f"Zoom @ N={inset_at}", fontsize=14, pad=2)
+        ax_ins.tick_params(labelsize=12)
+        ax_ins2.tick_params(labelsize=12)
 
     plt.tight_layout()
     plt.savefig("Latency_and_Processing_Time_All.pdf")
@@ -343,7 +320,7 @@ def plot_latency_and_time_all(df_beam: pd.DataFrame, df_opt: pd.DataFrame, df_ra
 if __name__ == "__main__":
     # ---- Config ----
     BEAM_WIDTH   = 300
-    MAX_DEVICES  = 4       # keep modest if brute force is enabled
+    MAX_DEVICES  = 6       # keep modest if brute force is enabled
     RAND_TRIALS  = 200      # random samples per N (set to 1 for single-shot)
     RAND_SEED    = 42
     INSET_AT     = 4        # set to None to disable inset
@@ -359,13 +336,12 @@ if __name__ == "__main__":
     print("\n--- Brute Force ---")
     df_opt  = evaluate_latency_vs_devices_bruteforce(L, MAX_DEVICES, cost_segment)
 
-    print("\n--- Random-Fit ---")
-    df_rand = evaluate_latency_vs_devices_random(L, MAX_DEVICES, cost_segment, trials=RAND_TRIALS, seed=RAND_SEED)
+    #print("\n--- Random-Fit ---")
+    #df_rand = evaluate_latency_vs_devices_random(L, MAX_DEVICES, cost_segment, trials=RAND_TRIALS, seed=RAND_SEED)
 
     # Optional: print merged table
-    merged = (df_beam.merge(df_opt, on="Devices").merge(df_rand, on="Devices"))
-    print("\nCombined results:\n", merged.to_string(index=False))
-    # Tip: 'Random_Best_Splits' column shows the actual split indices to deploy.
+    #merged = (df_beam.merge(df_opt, on="Devices").merge(df_rand, on="Devices"))
+    #print("\nCombined results:\n", merged.to_string(index=False))
 
     # Plot all three in one figure
-    plot_latency_and_time_all(df_beam, df_opt, df_rand, inset_at=INSET_AT)
+    plot_latency_and_time_all(df_beam, df_opt,  inset_at=INSET_AT)
